@@ -30,8 +30,12 @@ except ImportError:
 
 class DatabaseService:
     def __init__(self, supabase_url: Optional[str] = None, supabase_key: Optional[str] = None):
-        self.supabase_url = supabase_url or os.getenv("SUPABASE_URL")
-        self.supabase_key = supabase_key or os.getenv("SUPABASE_KEY")
+        raw_url = (supabase_url or os.getenv("SUPABASE_URL", "")).strip().rstrip("/")
+        if raw_url.endswith("/rest/v1"):
+            raw_url = raw_url[:-8].rstrip("/")
+        self.supabase_url = raw_url
+
+        self.supabase_key = (supabase_key or os.getenv("SUPABASE_KEY", "")).strip()
         self.client: Optional[Any] = None
         self.is_connected: bool = False
         self.connection_error: Optional[str] = None
