@@ -86,17 +86,15 @@ class DatabaseService:
             self.last_error = str(e)
 
     def _ensure_supabase_profile_exists(self):
-        """Ensures the demo user exists in Supabase so Foreign Key constraints succeed."""
+        """Ensures the demo user and accounts exist in Supabase so Foreign Key constraints succeed."""
         if not self.is_connected or not self.client:
             return
         try:
-            check = self.client.table("profiles").select("id").eq("id", DEMO_USER_ID).execute()
-            if not check.data:
-                self.client.table("profiles").insert(DEFAULT_PROFILE).execute()
-                for acc in DEFAULT_ACCOUNTS:
-                    self.client.table("accounts").insert(acc).execute()
-                for goal in DEFAULT_GOALS:
-                    self.client.table("financial_goals").insert(goal).execute()
+            self.client.table("profiles").upsert(DEFAULT_PROFILE).execute()
+            for acc in DEFAULT_ACCOUNTS:
+                self.client.table("accounts").upsert(acc).execute()
+            for goal in DEFAULT_GOALS:
+                self.client.table("financial_goals").upsert(goal).execute()
         except Exception as e:
             self.last_error = f"Auto-seed check: {str(e)}"
 
@@ -106,7 +104,14 @@ class DatabaseService:
             return {"success": False, "message": "Supabase is not connected."}
 
         try:
-            self._ensure_supabase_profile_exists()
+            # 1. Guarantee profile, accounts, and goals exist first
+            self.client.table("profiles").upsert(DEFAULT_PROFILE).execute()
+            for acc in DEFAULT_ACCOUNTS:
+                self.client.table("accounts").upsert(acc).execute()
+            for goal in DEFAULT_GOALS:
+                self.client.table("financial_goals").upsert(goal).execute()
+
+            # 2. Synchronize transactions with account fallback
             synced_txs = 0
             for tx in self._memory_transactions[:20]:
                 payload = {
@@ -123,9 +128,14 @@ class DatabaseService:
                     "device_ip": tx.get("device_ip", "127.0.0.1"),
                     "channel": tx.get("channel", "ONLINE"),
                 }
-                self.client.table("transactions").upsert(payload).execute()
+                try:
+                    self.client.table("transactions").upsert(payload).execute()
+                except Exception:
+                    # Foreign key safety fallback: account_id is nullable in schema
+                    payload["account_id"] = None
+                    self.client.table("transactions").upsert(payload).execute()
                 synced_txs += 1
-            return {"success": True, "message": f"Successfully synchronized {synced_txs} transactions to Supabase!"}
+            return {"success": True, "message": f"Successfully synchronized {synced_txs} transactions, accounts, and demo profile to Supabase!"}
         except Exception as e:
             return {"success": False, "message": f"Sync failed: {str(e)}"}
 
